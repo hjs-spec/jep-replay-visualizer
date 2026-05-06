@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JEP Event Replay Visualizer</title>
+    <link rel="stylesheet" href="src/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">JEP Replay Semantics</p>
+          <h1>Event Replay Visualizer</h1>
+          <p class="hero-copy">Load a <code>archive.jsonl</code> stream to replay judgment chains, delegation lineage, verification flow, authority propagation, and tamper signals.</p>
+        </div>
+        <div class="session-card" id="sessionSummary" aria-live="polite"></div>
+      </header>
+
+      <section class="toolbar" aria-label="Replay controls">
+        <label class="file-picker">
+          <span>Open archive.jsonl</span>
+          <input id="archiveInput" type="file" accept=".jsonl,.json,application/json,text/plain" />
+        </label>
+        <button id="loadSample" type="button">Load sample replay</button>
+        <button id="resetReplay" type="button" class="ghost">Reset</button>
+        <div class="playback" aria-label="Replay cursor">
+          <button id="stepBack" type="button" class="ghost">◀</button>
+          <input id="replayCursor" type="range" min="0" value="0" />
+          <button id="stepForward" type="button" class="ghost">▶</button>
+        </div>
+      </section>
+
+      <main class="workspace">
+        <section class="panel timeline-panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">Timeline View</p>
+              <h2>Event timeline</h2>
+            </div>
+            <span id="cursorLabel" class="pill">0 events</span>
+          </div>
+          <div id="timeline" class="timeline empty-state">Load an archive to begin replay.</div>
+        </section>
+
+        <section class="panel graph-panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">Graph Lineage View</p>
+              <h2>Delegation lineage</h2>
+            </div>
+            <span class="pill">Authority propagation</span>
+          </div>
+          <svg id="delegationGraph" role="img" aria-label="Delegation lineage graph"></svg>
+        </section>
+
+        <section class="panel inspector-panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">Replay Inspector</p>
+              <h2>Replay state</h2>
+            </div>
+          </div>
+          <div id="inspector" class="inspector-grid"></div>
+        </section>
+
+        <section class="panel detail-panel">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">Event Detail Panel</p>
+              <h2>Selected event</h2>
+            </div>
+          </div>
+          <pre id="eventDetail" class="event-detail">Select an event to inspect normalized replay evidence.</pre>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="src/app.js"></script>
+  </body>
+</html>
