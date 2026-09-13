@@ -46,3 +46,7 @@ Then open <http://localhost:4173>.
 npm test
 npm run check
 ```
+
+## Runtime and verification notes
+
+See [HARDENING.md](HARDENING.md) for supported behavior, regression checks, and compatibility boundaries.
