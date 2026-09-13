@@ -38,6 +38,7 @@ export function buildReplaySession(events, options = {}) {
   const cursor = Number.isInteger(options.cursor) ? Math.max(0, Math.min(options.cursor, normalized.length)) : normalized.length;
   const replayed = normalized.slice(0, cursor);
   const state = createInitialState(normalized.length, cursor);
+  for (const [principal, scopes] of Object.entries(options.initialAuthority ?? {})) grantAuthority(state, principal, normalizeScopes(scopes));
 
   replayed.forEach((event, index) => applyEvent(state, event, replayed[index - 1], index));
 
@@ -76,17 +77,22 @@ function createInitialState(totalEvents, cursor) {
     termination: null,
     terminationIndex: null,
     delegationGraph: { nodes: [], edges: [] },
-    tamperHighlights: []
+    tamperHighlights: [],
+    authorityFindings: [],
+    integrityStatus: "not-cryptographically-verified"
   };
 }
 
 function normalizeEvent(raw, index) {
-  const type = normalizeToken(raw.type ?? raw.event_type ?? raw.kind ?? raw.action ?? 'event');
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) raw = { type: 'parse_error', error: 'Archive record must be an object', raw_value: raw };
+  const verb = raw.verb ?? raw.event_type;
+  const verbType = { J: 'judgment', D: 'delegation', T: 'termination', V: 'verification' }[verb];
+  const type = normalizeToken(verbType ?? raw.type ?? raw.event_type ?? raw.kind ?? raw.action ?? 'event');
   const id = String(raw.event_id ?? raw.id ?? raw.hash ?? `event-${index + 1}`);
-  const actor = stringify(raw.actor ?? raw.principal ?? raw.authority ?? raw.delegator ?? raw.issuer ?? 'unknown');
+  const actor = stringify(raw.who ?? raw.actor ?? raw.principal ?? raw.authority ?? raw.delegator ?? raw.issuer ?? 'unknown');
   const delegator = stringify(raw.delegator ?? raw.from ?? raw.issuer ?? (DELEGATION_TYPES.has(type) || REVOCATION_TYPES.has(type) ? actor : undefined));
   const delegatee = stringify(raw.delegatee ?? raw.to ?? raw.subject ?? raw.recipient ?? raw.assignee);
-  const scopes = normalizeScopes(raw.scope ?? raw.scopes ?? raw.authority_scope ?? raw.permissions ?? raw.claims);
+  const scopes = normalizeScopes(raw.scope ?? raw.scopes ?? raw.authority_scope ?? raw.permissions);
   const verificationState = normalizeVerificationState(raw.result ?? raw.status ?? raw.state ?? raw.verified ?? raw.signature_valid ?? raw.integrity);
 
   return {
@@ -95,25 +101,27 @@ function normalizeEvent(raw, index) {
     raw,
     type,
     category: categorize(type),
-    timestamp: raw.ts ?? raw.timestamp ?? raw.time ?? null,
+    timestamp: raw.when ?? raw.ts ?? raw.timestamp ?? raw.time ?? null,
     actor,
     subject: stringify(raw.subject ?? raw.target ?? raw.case_id ?? raw.resource),
     delegator,
     delegatee,
     scopes,
     decision: stringify(raw.decision ?? raw.judgment ?? raw.verdict ?? raw.outcome),
-    parentId: stringify(raw.parent_id ?? raw.parent ?? raw.previous_event ?? raw.causal_parent),
-    previousHash: stringify(raw.previous_hash ?? raw.prev_hash ?? raw.previousHash),
+    parentId: stringify(raw.parent_id ?? raw.parent ?? raw.previous_event ?? raw.causal_parent ?? raw.ref),
+    previousHash: stringify(raw.previous_event_hash ?? raw.previous_hash ?? raw.prev_hash ?? raw.previousHash),
     hash: stringify(raw.hash ?? raw.event_hash ?? raw.digest),
     verificationState,
     reason: stringify(raw.reason ?? raw.error ?? raw.message),
     isTermination: TERMINATION_TYPES.has(type),
+    isCore: raw.jep === "1",
+    claim: raw.what ?? null,
     explicitTamper: raw.tampered === true || raw.integrity === false || raw.signature_valid === false || raw.verified === false
   };
 }
 
 function applyEvent(state, event, previousEvent, index) {
-  if (state.termination && index > state.terminationIndex) {
+  if (!event.isCore && state.termination && index > state.terminationIndex) {
     flagTamper(state, event.id, 'Event appears after replay termination.');
   }
 
@@ -130,22 +138,37 @@ function applyEvent(state, event, previousEvent, index) {
   }
 
   if (event.category === 'delegation') {
-    const inherited = event.delegator && state.authority.has(event.delegator);
-    const isRoot = !state.delegations.length && !state.authority.size;
-    if (!inherited && !isRoot) flagTamper(state, event.id, `${event.delegator || 'unknown delegator'} delegated without observed authority.`);
-    grantAuthority(state, event.delegatee, event.scopes);
-    if (isRoot && event.delegator) grantAuthority(state, event.delegator, event.scopes);
-    state.delegations.push({ id: event.id, from: event.delegator || event.actor, to: event.delegatee || event.subject, scopes: event.scopes, timestamp: event.timestamp, active: true });
-    state.eventAuthority.set(event.id, inherited || isRoot ? 'propagated' : 'authority-gap');
+    const observed = state.authority.has(event.delegator);
+    const allowed = observed && hasAllScopes(state, event.delegator, event.scopes);
+    if (allowed) grantAuthority(state, event.delegatee, event.scopes);
+    const status = allowed ? 'propagated-observed' : observed ? 'out-of-scope' : 'unknown';
+    state.delegations.push({ id: event.id, from: event.delegator || event.actor, to: event.delegatee || event.subject, scopes: event.scopes, timestamp: event.timestamp, active: allowed });
+    state.eventAuthority.set(event.id, status);
+    if (!allowed) state.authorityFindings.push({ eventId: event.id, status, reason: observed ? 'Delegated scope exceeds the observed grant.' : 'No configured root or observed parent authority.' });
   } else if (event.category === 'revocation') {
     revokeAuthority(state, event.delegatee, event.scopes);
-    state.delegations.filter((edge) => edge.to === event.delegatee).forEach((edge) => { edge.active = false; });
-    state.eventAuthority.set(event.id, 'revoked');
+    // Re-evaluate descendants after losing a parent grant. Missing lineage fails closed.
+    const queue = [event.delegatee];
+    const visited = new Set();
+    while (queue.length) {
+      const principal = queue.shift();
+      if (visited.has(principal)) continue;
+      visited.add(principal);
+      for (const edge of state.delegations.filter(edge => edge.from === principal && edge.active)) {
+        if (!hasAllScopes(state, edge.from, edge.scopes)) {
+          edge.active = false;
+          revokeAuthority(state, edge.to, edge.scopes);
+          queue.push(edge.to);
+        }
+      }
+    }
+    state.delegations.filter(edge => edge.to === event.delegatee && !hasAllScopes(state, edge.to, edge.scopes)).forEach(edge => { edge.active = false; });
+    state.eventAuthority.set(event.id, 'revoked-observed');
   } else {
-    if (event.scopes.length) grantAuthority(state, event.actor, event.scopes);
-    const hasAuthority = event.actor === 'unknown' || !event.scopes.length || hasAnyScope(state, event.actor, event.scopes);
-    state.eventAuthority.set(event.id, hasAuthority ? 'observed' : 'out-of-scope');
-    if (!hasAuthority) flagTamper(state, event.id, `${event.actor} acted outside replayed authority scope.`);
+    const observed = state.authority.has(event.actor);
+    const status = !event.scopes.length || !observed ? 'unknown' : hasAllScopes(state, event.actor, event.scopes) ? 'observed' : 'out-of-scope';
+    state.eventAuthority.set(event.id, status);
+    if (status === 'out-of-scope') state.authorityFindings.push({ eventId: event.id, status, reason: 'Requested scopes exceed the observed grant.' });
   }
 
   if (event.category === 'verification') {
@@ -153,7 +176,7 @@ function applyEvent(state, event, previousEvent, index) {
     if (event.verificationState === 'failed') flagTamper(state, event.id, event.reason || 'Verification flow reported failure.');
   }
 
-  if (event.isTermination) {
+  if (event.isTermination && !event.isCore) {
     state.termination = { status: event.raw.state ?? 'terminated', eventId: event.id, timestamp: event.timestamp, reason: event.reason || 'Termination event replayed.' };
     state.terminationIndex = index;
   }
@@ -183,10 +206,10 @@ function revokeAuthority(state, principal, scopes) {
   scopes.forEach((scope) => state.authority.get(principal).delete(scope));
 }
 
-function hasAnyScope(state, principal, scopes) {
+function hasAllScopes(state, principal, scopes) {
   const current = state.authority.get(principal);
   if (!current) return false;
-  return scopes.some((scope) => current.has(scope) || [...current].some((owned) => scope.startsWith(owned) || owned.startsWith(scope)));
+  return scopes.length > 0 && scopes.every((scope) => current.has(scope) || [...current].some((owned) => scope.startsWith(owned + ":")));
 }
 
 function flagTamper(state, eventId, reason) {

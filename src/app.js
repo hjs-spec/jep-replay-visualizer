@@ -161,9 +161,10 @@ function renderInspector(replay) {
     ${metricCard('Judgment chain', replay.judgmentChain.length, replay.judgmentChain.map((j) => `${j.id}: ${j.decision || 'observed'}`))}
     ${metricCard('Delegations', replay.delegations.length, replay.delegations.map((d) => `${d.from} → ${d.to} (${d.active ? 'active' : 'revoked'})`))}
     ${metricCard('Verification flow', replay.verificationFlow.length, replay.verificationFlow.map((v) => `${v.id}: ${v.state}`))}
+    ${metricCard('Cryptographic verification', 'Not performed', ['This view compares reported links and results. It does not verify signatures or recompute event hashes.'])}
     ${metricCard('Authority scopes', replay.authorityScopes.length, replay.authorityScopes.map((a) => `${a.principal}: ${a.scopes.join(', ') || 'none'}`))}
     ${metricCard('Termination state', replay.terminationState.status, [replay.terminationState.reason, replay.terminationState.eventId].filter(Boolean))}
-    ${metricCard('Tamper detection', replay.tamperHighlights.length, replay.tamperHighlights.flatMap((t) => t.reasons.map((reason) => `${t.eventId}: ${reason}`)), replay.tamperHighlights.length ? 'danger' : 'ok')}
+    ${metricCard('Reported integrity signals', replay.tamperHighlights.length, replay.tamperHighlights.flatMap((t) => t.reasons.map((reason) => `${t.eventId}: ${reason}`)), replay.tamperHighlights.length ? 'danger' : '')}
   `;
 }
 
