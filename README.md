@@ -1,6 +1,8 @@
 # JEP Event Replay Visualizer
 
-A focused browser visualizer for making **JEP replay semantics observable** from a `archive.jsonl` event stream.
+A browser viewer for recorded events and declared delegation relationships in JSONL archives.
+
+**This is a visualization, not a cryptographic verifier.** It displays supplied links and verification results; it does not recompute event hashes or validate JWS. Its authority and termination projections are local visualization rules, not JEP Core semantics. Use the [Core validator](https://github.com/hjs-spec/jep-core/tree/main/reference-validator) for signed-event checks.
 
 ## What it visualizes
 
@@ -9,7 +11,7 @@ A focused browser visualizer for making **JEP replay semantics observable** from
 - Verification flow state
 - Authority propagation and active scopes
 - Replay termination state
-- Tamper detection highlights for malformed events, broken hash links, explicit integrity failures, failed verifications, post-termination events, and authority gaps
+- Consistency findings for malformed events, broken reported links and explicit reported failures; unknown authority is not proof of tampering
 
 ## UI surfaces
 
@@ -18,7 +20,7 @@ A focused browser visualizer for making **JEP replay semantics observable** from
 - **Replay inspector** — compare judgment, delegation, verification, authority, termination, and tamper state at the current cursor.
 - **Event detail panel** — inspect normalized event evidence and raw source data.
 
-This is intentionally **not** a SIEM, enterprise dashboard, or workflow platform. It is a replay semantics observer for JEP archives.
+This is intentionally **not** a SIEM, enterprise dashboard, or workflow platform. It projects the supported archive fields listed below.
 
 ## Input
 
